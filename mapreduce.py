@@ -1,5 +1,5 @@
-from multiprocessing import Manager
 import multiprocessing
+from multiprocessing import Manager
 import re
 import sys
 import os
@@ -44,26 +44,63 @@ def shuffle(pairs):
     return res
 
 
-def reduce(key, val):
+def reduce(key, val, total, lock):
     # number of values with the same key
     count = sum(val)
+    with lock:
+        total.value += count
     return (key, count)
 
 
+def write_result(file, result, total):
+    # Write result to file
+    with open(file + "_result.txt", "w") as f:
+        f.write(file + "\n")
+        for key, val in result:
+            f.write(key + " : " + str(round(((val/total) * 100), 2)) + "%\n")
+
+
 if __name__ == "__main__":
-    file = "ArcTecSw_2023_BigData_Practica_Part1_Sample"
-    f = open(file, "r", encoding="utf_8")
+    for file in sys.argv[1:]:
+        # Variables needed for the map reduce process
 
-    lines = f.readlines()
+        share_map_result = []
+        share_reduced_result = []
+        i = 1
 
-    maped = []
-    for line in lines:
-        maped.append(map(line))
+        manager = Manager()
+        n_words = manager.Value(int, 0)
+        lock = manager.Lock()
 
-    shuffled = shuffle(maped)
+        # create one pool for mapping and another for reducing
+        mapPool = multiprocessing.Pool()
+        reducePool = multiprocessing.Pool()
 
-    result = []
-    for key, val in shuffled.items():
-        result.append(reduce(key, val))
+        # Read the file
+        file = "ArcTecSw_2023_BigData_Practica_Part1_Sample"
+        f = open(file, "r", encoding="utf_8")
 
-    pass
+        lines = f.readlines()
+
+        for line in lines:
+            mapPool.apply_async(map, args=(
+                line,), callback=share_map_result.append)
+
+        # Wait for the map function
+        mapPool.close()
+        mapPool.join()
+
+        # Shuffle the results
+        shuffled = shuffle(share_map_result)
+
+        # Reduce the results
+        for key, val in shuffled.items():
+            reducePool.apply_async(reduce, args=(
+                key, val, n_words, lock,), callback=share_reduced_result.append)
+
+        # Wait for the reduce function
+        reducePool.close()
+        reducePool.join()
+
+        # Write the result to a file
+        write_result(file, share_reduced_result, n_words.value)
