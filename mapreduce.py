@@ -3,9 +3,14 @@ from multiprocessing import Manager
 import re
 import sys
 import os
+import time
 
 # This variable is to remove noise
 expresion = re.compile(r'\,|\.|\;|\:|\-|\'')
+
+# This variable is to establish the number of threads to use
+#n_threads = multiprocessing.cpu_count()
+n_threads = 2
 
 
 def std_words(words):
@@ -44,8 +49,9 @@ def shuffle(pairs):
     return res
 
 
-def reduce(key, val, total, lock):
+def reduce(args):
     # number of values with the same key
+    key, val, total, lock = args
     count = sum(val)
     with lock:
         total.value += count
@@ -61,6 +67,9 @@ def write_result(file, result, total):
 
 
 if __name__ == "__main__":
+    
+    print("Execution with n_threads: " + str(n_threads))
+    
     for file in sys.argv[1:]:
         # Variables needed for the map reduce process
 
@@ -73,18 +82,18 @@ if __name__ == "__main__":
         lock = manager.Lock()
 
         # create one pool for mapping and another for reducing
-        mapPool = multiprocessing.Pool()
-        reducePool = multiprocessing.Pool()
+        mapPool = multiprocessing.Pool(n_threads)
+        reducePool = multiprocessing.Pool(n_threads)
 
         # Read the file
-        file = "ArcTecSw_2023_BigData_Practica_Part1_Sample"
+        #file = "ArcTecSw_2023_BigData_Practica_Part1_Sample"
         f = open(file, "r", encoding="utf_8")
 
         lines = f.readlines()
 
-        for line in lines:
-            mapPool.apply_async(map, args=(
-                line,), callback=share_map_result.append)
+        start = time.time()
+
+        share_map_result = mapPool.map(map, lines)
 
         # Wait for the map function
         mapPool.close()
@@ -94,13 +103,16 @@ if __name__ == "__main__":
         shuffled = shuffle(share_map_result)
 
         # Reduce the results
-        for key, val in shuffled.items():
-            reducePool.apply_async(reduce, args=(
-                key, val, n_words, lock,), callback=share_reduced_result.append)
+        args = [(x[0], x[1], n_words, lock) for x in shuffled.items()]
+        share_reduced_result = reducePool.map(reduce, args)
 
         # Wait for the reduce function
         reducePool.close()
         reducePool.join()
+
+        end = time.time()
+
+        print("Elapsed time: " + str(end - start) + " seconds")
 
         # Write the result to a file
         write_result(file, share_reduced_result, n_words.value)
